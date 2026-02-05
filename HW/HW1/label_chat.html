@@ -1,0 +1,1112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chat Labeling Tool (local, offline)</title>
+  <style>
+    :root{
+      --bg:#f6f7fb;
+      --card:#ffffff;
+      --muted:#566079;
+      --text:#182033;
+      --border:rgba(17,24,39,.12);
+      --shadow: 0 10px 30px rgba(17,24,39,.08);
+      --bad:#c92a2a;
+      --ok:#2f9e44;
+      --soft:#eef2ff;
+    }
+    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background:var(--bg); color:var(--text); }
+    header{
+      padding:14px 18px; border-bottom:1px solid var(--border); background:rgba(255,255,255,.85);
+      backdrop-filter: blur(6px);
+      position:sticky; top:0; z-index:10;
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+    }
+    header h1{ margin:0; font-size:15px; font-weight:800; letter-spacing:.2px; }
+    header .right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    main{ padding:18px; max-width:1120px; margin:0 auto; }
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:16px;
+      box-shadow: var(--shadow);
+    }
+    .muted{ color:var(--muted); font-size:13px; }
+    .pill{
+      display:inline-flex; align-items:center; gap:6px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.9);
+      padding:6px 10px; border-radius:999px;
+      font-size:12px; color:var(--muted);
+    }
+    .pill strong{ color:var(--text); font-weight:850; }
+    label{ font-size:13px; color:var(--muted); display:block; margin-bottom:6px; }
+    select, input[type="text"], input[type="number"]{
+      background:#fff;
+      color:var(--text);
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:10px 12px;
+      outline:none;
+      min-width:240px;
+      box-sizing: border-box;
+    }
+    select:focus, input:focus{
+      border-color: rgba(47,111,235,.55);
+      box-shadow: 0 0 0 3px rgba(47,111,235,.15);
+    }
+    button{
+      background: var(--soft);
+      color: var(--text);
+      border:1px solid rgba(47,111,235,.35);
+      padding:10px 12px;
+      border-radius:12px;
+      cursor:pointer;
+      font-weight:850;
+    }
+    button:hover{ background: rgba(238,242,255,.85); }
+    button:disabled{
+      opacity:.55; cursor:not-allowed;
+      background: rgba(255,255,255,.65);
+      border-color: var(--border);
+    }
+    .danger{ background: rgba(201,42,42,.08); border-color: rgba(201,42,42,.35); }
+    .okbtn{ background: rgba(47,158,68,.10); border-color: rgba(47,158,68,.35); }
+    .hr{ height:1px; background: var(--border); margin:14px 0; }
+    .msgmeta{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+    .status{ font-size:12px; font-weight:850; }
+    .status.ok{ color: var(--ok); }
+    .status.bad{ color: var(--bad); }
+    .filebox{ display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+    input[type="file"]{ color:var(--muted); }
+    .hint{
+      background: rgba(47,111,235,.06);
+      border: 1px solid rgba(47,111,235,.20);
+      border-radius:12px;
+      padding:10px 12px;
+      color: var(--muted);
+      font-size: 12.5px;
+      margin-top: 12px;
+    }
+    .gridForm{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:12px;
+      align-items:start;
+    }
+    @media (max-width: 900px){ .gridForm{ grid-template-columns:1fr; } }
+    .field{
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:12px;
+      background: rgba(255,255,255,.6);
+    }
+    .field .req{ color: var(--bad); font-weight:900; margin-left:6px; }
+    .field .help{ margin-top:8px; font-size:12px; color: var(--muted); }
+    details{ margin-top: 12px; }
+    .full{
+      white-space:pre-wrap;
+      background: rgba(17,24,39,.04);
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:12px;
+      margin-top:10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size:12px;
+      line-height:1.35;
+    }
+    .toolbar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top: 14px; }
+    code{ background: rgba(17,24,39,.06); padding:2px 6px; border-radius:8px; border: 1px solid var(--border); }
+    .instructorOnly{ display:none; }
+    #consentOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      padding: 16px;
+    }
+
+    .consent-modal {
+      width: min(640px, 100%);
+      background: #f7f7fb; /* lighter background */
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: 14px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.20);
+      padding: 18px 18px 14px 18px;
+      color: #111;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    .consent-modal h2 {
+      margin: 0 0 10px 0;
+      font-size: 18px;
+    }
+
+    .consent-text p {
+      margin: 8px 0;
+      line-height: 1.35;
+      font-size: 14px;
+    }
+
+    .consent-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .btn-primary, .btn-secondary {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .btn-primary {
+      background: #2f6fed;
+      color: white;
+    }
+
+    .btn-secondary {
+      background: #e6e8ef;
+      color: #111;
+    }
+
+    .btn-primary:hover { filter: brightness(0.98); }
+    .btn-secondary:hover { filter: brightness(0.98); }
+
+    .consent-footnote {
+      margin-top: 10px;
+      font-size: 12px;
+      color: rgba(0,0,0,0.65);
+    }
+    .optout-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        margin-top: 10px;
+        font-size: 12px;              /* smaller */
+        color: rgba(0,0,0,0.70);
+        user-select: none;
+    }
+
+    .optout-row input[type="checkbox"] {
+        margin-top: 2px;
+        transform: scale(0.9);        /* slightly smaller checkbox */
+        accent-color: #666;
+    }
+
+    .optout-row span {
+        line-height: 1.25;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Local Chat Labeling Tool</h1>
+  <div class="right">
+    <span class="pill">Conversation: <strong id="convTitle">—</strong></span>
+    <span class="pill"><strong id="count">0</strong>&nbsp;messages</span>
+    <span class="pill">Progress: <strong id="progress">0/0</strong></span>
+    <button id="exportMergedBtn" class="okbtn" disabled>Export labeled conversations</button>
+  </div>
+</header>
+
+<main>
+  <div class="card" id="loadCard">
+    <div class="filebox">
+      <div style="min-width:320px;">
+        <label for="fileInput">Load ChatGPT export JSON</label>
+        <input id="fileInput" type="file" accept=".json,application/json" />
+        <div class="muted" style="margin-top:6px;">Load the full exported conversations from ChatGPT.</div>
+      </div>
+
+      <div style="min-width:320px;">
+        <label for="conversationSelect">Select a conversation</label>
+        <select id="conversationSelect" disabled>
+          <option value="">-- load a file first --</option>
+        </select>
+      </div>
+
+      <!-- Instructor-only schema loader (hidden from students) -->
+      <div class="instructorOnly" style="min-width:320px;">
+        <label for="schemaInput">[Instructor] Load schema.json</label>
+        <input id="schemaInput" type="file" accept=".json,application/json" />
+        <div class="muted" style="margin-top:6px;">Hidden unless opened with <code>?instructor=1</code>.</div>
+      </div>
+
+      <div style="flex:1;"></div>
+      <button id="resetBtn" class="danger" disabled>Reset</button>
+    </div>
+
+    <div class="hint">
+      <strong>What to label:</strong> Only <code>user</code> and <code>assistant</code> messages are shown.
+      Tool/web/system/internal items are skipped automatically.
+    </div>
+  </div>
+
+  <div style="height:14px;"></div>
+
+  <div class="card" id="labelCard" style="display:none;">
+    <div class="msgmeta">
+      <span class="pill">Turn <strong id="turnIdx">0</strong></span>
+      <span class="pill">Role: <strong id="role">user</strong></span>
+      <span class="pill">Message ID: <strong id="msgId">…</strong></span>
+      <span class="pill">Timestamp: <strong id="ts">—</strong></span>
+      <span class="status bad" id="reqStatus">Missing required labels</span>
+    </div>
+
+    <div class="gridForm" id="dynamicFields"></div>
+
+    <details open>
+      <summary class="muted">Show message content</summary>
+      <div class="full" id="contentBox"></div>
+    </details>
+
+    <div class="toolbar">
+      <button id="prevBtn">← Prev</button>
+      <button id="nextBtn">Next →</button>
+      <button id="jumpBtn">Jump to…</button>
+    </div>
+  </div>
+
+  <div class="muted" id="footnote" style="display:none; margin-top:10px; font-size:12px;">
+    Tip: Tab to dropdowns; Arrow keys + Enter. Left/Right arrows navigate when not focused in an input.
+  </div>
+</main>
+
+<script>
+/**
+ * Students won't see the schema UI:
+ * - No schema name shown
+ * - No schema download/export
+ * - Export doesn't include schema
+ *
+ * Instructor can still load schema with: label_chat.html?instructor=1
+ * (This is UI hiding, not strong security — but works well for honest settings.)
+ */
+
+function el(id){ return document.getElementById(id); }
+function deepClone(x){ return JSON.parse(JSON.stringify(x)); }
+
+function normalizeContent(content){
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map(normalizeContent).join("\\n");
+  if (typeof content === "object"){
+    if (Array.isArray(content.parts)) return content.parts.map(x => String(x)).join("\\n");
+    if (typeof content.text === "string") return content.text;
+    if (content.content != null) return normalizeContent(content.content);
+    try { return JSON.stringify(content); } catch { return String(content); }
+  }
+  return String(content);
+}
+function isConversationalRole(role){ return role === "user" || role === "assistant"; }
+
+// stable hash for auto IDs
+function hash12(s){
+  let h = 0x811c9dc5;
+  for (let i=0;i<s.length;i++){
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return (("00000000"+h.toString(16)).slice(-8) + "0000").slice(0,12);
+}
+function makeAutoId(idx, role, text){
+  const h = hash12(`${idx}|${role}|${text}`);
+  return `auto_${String(idx).padStart(4,"0")}_${h}`;
+}
+
+/** ---------- Default schema embedded (students never see it) ---------- */
+let LABEL_SCHEMA = {
+  schema_name: "default_hidden",
+  roles: {
+    user: [
+      {
+        key: "intent",
+        label: "Intent (your prompt)",
+        type: "select",
+        required: true,
+        options: [
+          ["learning", "Learning a concept / algorithm"],
+          ["clarifying", "Clarification / following up"],
+          ["brainstorming", "Brainstorming strategies"],
+          ["coding", "Implementation / coding"],
+          ["debugging", "Debugging code"],
+          ["testing", "Testing / edge cases"],
+          ["performance", "Performance / complexity reasoning"],
+          ["formatting", "Polishing / formatting"],
+          ["other", "Other"]
+        ],
+        help: "Pick the single best tag for what you were trying to do."
+      },
+      {
+        key: "notes",
+        label: "Notes (optional; 1–2 sentences max)",
+        type: "text",
+        required: false,
+        placeholder: "Optional…"
+      }
+    ],
+    assistant: [
+      {
+        key: "helpfulness",
+        label: "Helpfulness (ChatGPT response)",
+        type: "select",
+        required: true,
+        options: [
+          [1, "1 = Not useful"],
+          [2, "2 = Somewhat useful"],
+          [3, "3 = Very useful"]
+        ]
+      },
+      {
+        key: "action_taken",
+        label: "Action taken",
+        type: "select",
+        required: true,
+        options: [
+          ["used_directly", "Used directly"],
+          ["modified", "Modified before using"],
+          ["inspiration_only", "Used as inspiration only"],
+          ["not_used", "Did not use"]
+        ]
+      },
+      {
+        key: "followed_up",
+        label: "Followed up because of this response",
+        type: "select",
+        required: true,
+        options: [
+          [1, "1 = Yes"],
+          [2, "2 = No"]
+        ]
+      },
+      {
+        key: "confidence_after",
+        label: "After this response, how clear was *your next step*?",
+        type: "select",
+        required: true,
+        options: [
+          [1, "1 = Less clear, more confused than before"],
+          [2, "2 = No clear, about the same as before"],
+          [3, "3 = Clearer, but still unsure"],
+          [4, "4 = Very clear, enough to proceed confidently"]
+        ]
+      },
+      {
+        key: "notes",
+        label: "Notes (optional; 1–2 sentences max)",
+        type: "text",
+        required: false,
+        placeholder: "Optional…"
+      }
+    ]
+  }
+};
+
+function validateSchema(schemaObj){
+  if (!schemaObj || typeof schemaObj !== "object") throw new Error("schema must be an object.");
+  if (!schemaObj.roles || typeof schemaObj.roles !== "object") throw new Error("schema.roles missing.");
+  for (const role of ["user","assistant"]){
+    if (!Array.isArray(schemaObj.roles[role])) throw new Error(`schema.roles.${role} must be an array.`);
+    for (const f of schemaObj.roles[role]){
+      if (!f.key || typeof f.key !== "string") throw new Error(`Each field must have a string key (role=${role}).`);
+      if (!f.label || typeof f.label !== "string") throw new Error(`Each field must have a label (role=${role}, key=${f.key}).`);
+      if (!["select","text","number","checkbox"].includes(f.type)) throw new Error(`Unsupported type '${f.type}' (role=${role}, key=${f.key}).`);
+      if (f.type === "select"){
+        if (!Array.isArray(f.options) || !f.options.length) throw new Error(`Select field needs non-empty options (role=${role}, key=${f.key}).`);
+        for (const opt of f.options){
+          if (!Array.isArray(opt) || opt.length !== 2) throw new Error(`Options must be [value,label] pairs (role=${role}, key=${f.key}).`);
+        }
+      }
+    }
+  }
+}
+
+/** ---------- Extract conversational messages only ---------- */
+function extractConversationalMessages(convo){
+  // list of messages
+  if (Array.isArray(convo) && convo.length && (convo[0].role || convo[0].author || convo[0].content)){
+    const out = [];
+    convo.forEach((m,i)=>{
+      const role = m.role || (m.author && m.author.role) || "unknown";
+      if (!isConversationalRole(role)) return;
+      const text = normalizeContent(m.content);
+      if (!text || !text.trim()) return;
+      const mid = m.id || m.message_id || makeAutoId(i, role, text);
+      const ts = m.create_time ?? m.timestamp ?? null;
+      out.push({ message_id: mid, role, content: text, timestamp: ts, backref: { type:"list", index:i } });
+    });
+    return out;
+  }
+  // {messages:[...]}
+  if (convo && typeof convo === "object" && Array.isArray(convo.messages)){
+    const msgs = extractConversationalMessages(convo.messages);
+    msgs.forEach(mm => mm.backref = { ...mm.backref, container:"messages" });
+    return msgs;
+  }
+  // mapping graph
+  if (convo && typeof convo === "object" && convo.mapping && typeof convo.mapping === "object"){
+    const mapping = convo.mapping;
+    let current = convo.current_node || null;
+
+    if (!current){
+      const leaves = Object.entries(mapping)
+        .filter(([k,v]) => !v.children || v.children.length === 0)
+        .map(([k,_]) => k);
+      current = leaves.length ? leaves[0] : null;
+    }
+    if (!current || !mapping[current]) throw new Error("Could not find current_node in mapping.");
+
+    const chain = [];
+    const seen = new Set();
+    while (current && mapping[current] && !seen.has(current)){
+      seen.add(current);
+      chain.push(current);
+      current = mapping[current].parent;
+    }
+    chain.reverse();
+
+    let j = 0;
+    const out = [];
+    for (const nodeId of chain){
+      const node = mapping[nodeId];
+      const msg = node && node.message;
+      if (!msg) continue;
+      const role = (msg.author && msg.author.role) || msg.role || "unknown";
+      if (!isConversationalRole(role)) continue;
+      const content_type = msg.content.content_type || "unknown";
+      if (content_type !== "text") continue;
+      const text = normalizeContent(msg.content);
+      if (!text || !text.trim()) continue;
+      const mid = msg.id || nodeId || makeAutoId(j, role, text);
+      const ts = msg.create_time ?? null;
+      out.push({ message_id: mid, role, content: text, timestamp: ts, backref: { type:"mapping", node_id: nodeId, message_id_in_node: msg.id || null } });
+      j += 1;
+    }
+    return out;
+  }
+  throw new Error("Unrecognized single-conversation format.");
+}
+
+function isConversationObject(x){
+  if (!x || typeof x !== "object") return false;
+  if (x.mapping && typeof x.mapping === "object") return true;
+  if (Array.isArray(x.messages)) return true;
+  return false;
+}
+
+function detectConversationList(obj){
+  if (Array.isArray(obj) && obj.length && isConversationObject(obj[0])) return obj;
+  if (obj && typeof obj === "object"){
+    for (const k of ["conversations","items","data"]){
+      if (Array.isArray(obj[k]) && obj[k].length && isConversationObject(obj[k][0])) return obj[k];
+    }
+    for (const k of Object.keys(obj)){
+      const v = obj[k];
+      if (Array.isArray(v) && v.length && isConversationObject(v[0])) return v;
+      if (v && typeof v === "object"){
+        for (const kk of Object.keys(v)){
+          const vv = v[kk];
+          if (Array.isArray(vv) && vv.length && isConversationObject(vv[0])) return vv;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function parseLoadedJson(obj){
+  const convList = detectConversationList(obj);
+  if (convList) return { convs: convList, raw: obj };
+  if (isConversationObject(obj)) return { convs: [obj], raw: obj };
+  if (obj && typeof obj === "object" && Array.isArray(obj.messages)) return { convs: [obj], raw: obj };
+  if (Array.isArray(obj) && obj.length && (obj[0].role || obj[0].author || obj[0].content)){
+    return { convs: [{ messages: obj, title: "Messages list (single conversation)" }], raw: obj };
+  }
+  return null;
+}
+
+function getConversationId(conv, idx){
+  return conv.id || conv.conversation_id || conv.uuid || `conv_${idx}`;
+}
+function titleOfConversation(conv, fallbackIndex){
+  const title = conv.title || conv.name || conv.conversation_title;
+  if (title && typeof title === "string" && title.trim()) return title.trim();
+  try{
+    const msgs = extractConversationalMessages(conv);
+    const firstUser = msgs.find(m => m.role === "user");
+    if (firstUser){
+      const t = firstUser.content.trim().split("\\n")[0].slice(0,60);
+      return `(untitled) ${t}${firstUser.content.length>60 ? "…" : ""}`;
+    }
+  }catch{}
+  return `(untitled #${fallbackIndex})`;
+}
+
+/** ---------- Labeling state ---------- */
+let loadedRawRoot = null;
+let allConversations = [];
+let activeConversation = null;
+let messages = [];
+let labels = new Map();
+let idx = 0;
+
+function resetAll(){
+  loadedRawRoot = null;
+  allConversations = [];
+  activeConversation = null;
+  messages = [];
+  labels = new Map();
+  idx = 0;
+
+  el("conversationSelect").innerHTML = '<option value="">-- load a file first --</option>';
+  el("conversationSelect").disabled = true;
+
+  el("labelCard").style.display = "none";
+  el("footnote").style.display = "none";
+  el("resetBtn").disabled = true;
+  el("exportMergedBtn").disabled = true;
+  el("count").textContent = "0";
+  el("progress").textContent = "0/0";
+  el("convTitle").textContent = "—";
+  el("fileInput").value = "";
+  if (el("schemaInput")) el("schemaInput").value = "";
+}
+
+function populateConversationSelect(){
+  const sel = el("conversationSelect");
+  sel.innerHTML = '<option value="">-- select a conversation --</option>';
+  allConversations.forEach((c) => {
+    const opt = document.createElement("option");
+    opt.value = c.key;
+    opt.textContent = c.title;
+    sel.appendChild(opt);
+  });
+  sel.disabled = false;
+}
+
+function ensureLabelRecord(mid, role){
+  if (!labels.has(mid)) labels.set(mid, { message_id: mid, role });
+  return labels.get(mid);
+}
+
+function requiredSatisfiedForMessage(m){
+  const rec = labels.get(m.message_id);
+  if (!rec) return false;
+
+  const roleFields = (LABEL_SCHEMA.roles && LABEL_SCHEMA.roles[m.role]) ? LABEL_SCHEMA.roles[m.role] : [];
+  for (const f of roleFields){
+    if (!f.required) continue;
+    const val = rec[f.key];
+    if (f.type === "checkbox"){
+      if (val !== true) return false;
+    } else if (val === undefined || val === null || String(val).length === 0){
+      return false;
+    }
+  }
+  return true;
+}
+
+function updateProgress(){
+  const total = messages.length;
+  let done = 0;
+  for (const m of messages) if (requiredSatisfiedForMessage(m)) done++;
+  el("progress").textContent = `${done}/${total}`;
+  el("exportMergedBtn").disabled = !(total > 0 && done === total);
+}
+
+function showMessage(i){
+  idx = Math.max(0, Math.min(i, messages.length - 1));
+  const m = messages[idx];
+
+  el("turnIdx").textContent = String(idx);
+  el("role").textContent = m.role;
+  el("msgId").textContent = m.message_id;
+  el("ts").textContent = (m.timestamp == null) ? "—" : String(m.timestamp);
+  el("contentBox").textContent = m.content || "";
+
+  ensureLabelRecord(m.message_id, m.role);
+  renderFieldsForCurrentMessage();
+
+  const ok = requiredSatisfiedForMessage(m);
+  const req = el("reqStatus");
+  if (ok){ req.textContent = "Required labels complete"; req.className = "status ok"; }
+  else { req.textContent = "Missing required labels"; req.className = "status bad"; }
+
+  el("prevBtn").disabled = (idx === 0);
+  el("nextBtn").disabled = (idx === messages.length - 1);
+
+  updateProgress();
+}
+
+function renderFieldsForCurrentMessage(){
+  const m = messages[idx];
+  const container = el("dynamicFields");
+  container.innerHTML = "";
+
+  const roleFields = (LABEL_SCHEMA.roles && LABEL_SCHEMA.roles[m.role]) ? LABEL_SCHEMA.roles[m.role] : [];
+  const rec = ensureLabelRecord(m.message_id, m.role);
+
+  roleFields.forEach((f) => {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+
+    const reqMark = f.required ? `<span class="req">*</span>` : "";
+    const id = `field_${f.key}`;
+
+    const top = document.createElement("div");
+    top.innerHTML = `<label for="${id}">${f.label}${reqMark}</label>`;
+    wrap.appendChild(top);
+
+    if (f.type === "select"){
+      const sel = document.createElement("select");
+      sel.id = id;
+
+      const opt0 = document.createElement("option");
+      opt0.value = "";
+      opt0.textContent = "-- select --";
+      sel.appendChild(opt0);
+
+      for (const [val,label] of f.options){
+        const opt = document.createElement("option");
+        opt.value = String(val);
+        opt.textContent = String(label);
+        sel.appendChild(opt);
+      }
+
+      const cur = rec[f.key];
+      sel.value = (cur === undefined || cur === null) ? "" : String(cur);
+
+      sel.addEventListener("change", () => {
+        const raw = sel.value;
+        const schemaVals = new Set(f.options.map(o => o[0]));
+        const numLike = [...schemaVals].some(v => typeof v === "number");
+        rec[f.key] = (numLike && raw !== "" && !Number.isNaN(Number(raw))) ? Number(raw) : raw;
+        labels.set(m.message_id, rec);
+        afterEdit();
+      });
+
+      wrap.appendChild(sel);
+
+    } else if (f.type === "text"){
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.id = id;
+      inp.placeholder = f.placeholder || "";
+      inp.value = rec[f.key] ?? "";
+      inp.addEventListener("input", () => {
+        rec[f.key] = inp.value;
+        labels.set(m.message_id, rec);
+        afterEdit();
+      });
+      wrap.appendChild(inp);
+
+    } else if (f.type === "number"){
+      const inp = document.createElement("input");
+      inp.type = "number";
+      inp.id = id;
+      if (f.min !== undefined) inp.min = String(f.min);
+      if (f.max !== undefined) inp.max = String(f.max);
+      if (f.step !== undefined) inp.step = String(f.step);
+      inp.value = (rec[f.key] ?? "") === "" ? "" : String(rec[f.key]);
+      inp.addEventListener("input", () => {
+        const v = inp.value;
+        rec[f.key] = (v === "") ? "" : Number(v);
+        labels.set(m.message_id, rec);
+        afterEdit();
+      });
+      wrap.appendChild(inp);
+
+    } else if (f.type === "checkbox"){
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "10px";
+
+      const chk = document.createElement("input");
+      chk.type = "checkbox";
+      chk.id = id;
+      chk.checked = (rec[f.key] === true);
+      chk.addEventListener("change", () => {
+        rec[f.key] = chk.checked;
+        labels.set(m.message_id, rec);
+        afterEdit();
+      });
+
+      row.appendChild(chk);
+      if (f.checkbox_label){
+        const lbl = document.createElement("label");
+        lbl.htmlFor = id;
+        lbl.style.margin = "0";
+        lbl.style.color = "var(--muted)";
+        lbl.textContent = f.checkbox_label;
+        row.appendChild(lbl);
+      }
+
+      wrap.appendChild(row);
+    }
+
+    if (f.help){
+      const help = document.createElement("div");
+      help.className = "help";
+      help.textContent = f.help;
+      wrap.appendChild(help);
+    }
+
+    container.appendChild(wrap);
+  });
+
+  function afterEdit(){
+    const ok = requiredSatisfiedForMessage(m);
+    const req = el("reqStatus");
+    if (ok){ req.textContent = "Required labels complete"; req.className = "status ok"; }
+    else { req.textContent = "Missing required labels"; req.className = "status bad"; }
+    updateProgress();
+  }
+}
+
+function loadConversationByKey(key){
+  const c = allConversations.find(x => x.key === key);
+  if (!c) return;
+
+  activeConversation = c;
+  el("convTitle").textContent = c.title;
+
+  messages = [];
+  labels = new Map();
+  idx = 0;
+
+  let msgs;
+  try{ msgs = extractConversationalMessages(c.convObj); }
+  catch(e){ alert("Could not extract conversational messages: " + e.message); return; }
+
+  if (!msgs.length){ alert("No user/assistant messages found."); return; }
+
+  messages = msgs.map((m, i) => ({
+    ...m,
+    role: (m.role || "unknown"),
+    content: (m.content || ""),
+    message_id: (m.message_id || makeAutoId(i, m.role || "unknown", m.content || "")),
+  }));
+
+  for (const m of messages) ensureLabelRecord(m.message_id, m.role);
+
+  el("count").textContent = String(messages.length);
+  el("labelCard").style.display = "block";
+  el("footnote").style.display = "block";
+  el("resetBtn").disabled = false;
+
+  showMessage(0);
+}
+
+function initFromLoadedRoot(obj){
+  const parsed = parseLoadedJson(obj);
+  if (!parsed){ alert("Could not detect conversations in this JSON."); return; }
+
+  loadedRawRoot = parsed.raw;
+
+  allConversations = parsed.convs.map((conv, i) => {
+    const key = getConversationId(conv, i);
+    const title = titleOfConversation(conv, i);
+    return { key, title, convObj: conv };
+  });
+
+  allConversations.sort((a,b) => a.title.localeCompare(b.title));
+  populateConversationSelect();
+
+  if (allConversations.length === 1){
+    el("conversationSelect").value = allConversations[0].key;
+    loadConversationByKey(allConversations[0].key);
+  }
+}
+
+/** Attach labels back to original structure (best effort) */
+function attachLabelsToConversationClone(conversationClone){
+  const labelFor = (mid) => labels.get(mid) || null;
+
+  if (conversationClone && typeof conversationClone === "object" && conversationClone.mapping && typeof conversationClone.mapping === "object"){
+    for (const m of messages){
+      if (m.backref?.type === "mapping"){
+        const nodeId = m.backref.node_id;
+        const node = conversationClone.mapping[nodeId];
+        if (node && node.message){
+          const lab = labelFor(m.message_id);
+          if (lab) node.message.labels = lab;
+        }
+      }
+    }
+    return;
+  }
+
+  if (conversationClone && typeof conversationClone === "object" && Array.isArray(conversationClone.messages)){
+    messages.forEach((m) => {
+      const bi = m.backref?.index;
+      if (typeof bi === "number" && conversationClone.messages[bi]){
+        const lab = labelFor(m.message_id);
+        if (lab) conversationClone.messages[bi].labels = lab;
+      }
+    });
+    return;
+  }
+
+  if (Array.isArray(conversationClone)){
+    messages.forEach((m) => {
+      const bi = m.backref?.index;
+      if (typeof bi === "number" && conversationClone[bi]){
+        const lab = labelFor(m.message_id);
+        if (lab) conversationClone[bi].labels = lab;
+      }
+    });
+  }
+}
+    
+// --------------------
+// Consent persistence
+// --------------------
+const CONSENT_STORAGE_KEY = "research_consent_v1";
+
+function getConsentRecord(){
+  const raw = localStorage.getItem(CONSENT_STORAGE_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+// Default = opt-out unless explicitly consented
+function getResearchConsent(){
+  const rec = getConsentRecord();
+  return rec?.value === true;
+}
+
+function setResearchConsent(value){
+  const rec = {
+    value: !!value,
+    timestamp: new Date().toISOString(),
+    version: "consent_v1"
+  };
+  localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify(rec));
+  return rec;
+}
+
+// Stable pseudonym (no names/emails). Local-only.
+const PSEUDONYM_KEY = "student_pseudonym_uuid_v1";
+function getOrCreateStudentPseudonym(){
+  let v = localStorage.getItem(PSEUDONYM_KEY);
+  if (!v) {
+    v = (crypto?.randomUUID ? crypto.randomUUID() : `uuid_${Math.random().toString(16).slice(2)}_${Date.now()}`);
+    localStorage.setItem(PSEUDONYM_KEY, v);
+  }
+  return v;
+}
+
+// --------------------
+// Consent popup UI
+// --------------------
+function showConsentModal({ force = false } = {}) {
+  const existing = getConsentRecord();
+  if (getResearchConsent()) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "consentOverlay";
+  overlay.innerHTML = `
+    <div class="consent-modal" role="dialog" aria-modal="true" aria-labelledby="consentTitle">
+      <h2 id="consentTitle">Research consent (optional)</h2>
+
+      <div class="consent-text">
+        <p>
+          This tool is used as part of this course to label your ChatGPT conversations.
+        </p>
+        <p>
+          With your permission, a <b>de-identified</b> version of your chat history and labels
+          may also be used for future research on human–AI collaboration and learning.
+        </p>
+        <p>
+          <b>Your decision is voluntary and will not affect your grade.</b>
+          You may complete the assignment and use this tool regardless of your choice below.
+        </p>
+      </div>
+
+      <label class="optout-row" title="Check this if you do NOT want your data used for research.">
+        <input type="checkbox" id="consentOptOut" />
+        <span>
+          I do <b>not</b> consent to the use of my de-identified data for research purposes.
+        </span>
+      </label>
+
+      <div class="consent-actions">
+        <button id="consentAgree" class="btn-primary">
+          Continue
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const prevOverflow = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+
+  function close() {
+    document.body.style.overflow = prevOverflow;
+    overlay.remove();
+  }
+
+  overlay.querySelector("#consentAgree").addEventListener("click", () => {
+    const optOut = overlay.querySelector("#consentOptOut").checked;
+    // If opt-out checked => consent is false, else true
+    setResearchConsent(!optOut);
+    close();
+    if (typeof onConsentChanged === "function") onConsentChanged();
+  });
+
+  // NOTE: no click-outside-to-close; ensures an explicit choice is recorded.
+}
+
+function initConsentPopup() {
+  // Ensure pseudonym exists early (helps keep exports stable)
+  getOrCreateStudentPseudonym();
+
+  // Show modal only if consent is not set yet
+  // if (!getConsentRecord()) showConsentModal();
+  showConsentModal();
+}
+
+function exportMergedJson(){
+  const convId = activeConversation?.key || "";
+  const convTitle = activeConversation?.title || "";
+
+  const labeledMessages = messages.map((m, turnIndex) => ({
+    conversation_id: convId,
+    conversation_title: convTitle,
+    turn_index: turnIndex,
+    message_id: m.message_id,
+    role: m.role,
+    timestamp: m.timestamp,
+    content: m.content,
+    labels: labels.get(m.message_id) || {}
+  }));
+
+  const conversationClone = deepClone(activeConversation?.convObj ?? null);
+  if (conversationClone) attachLabelsToConversationClone(conversationClone);
+
+  // Consent metadata (default opt-out)
+  const consentRec = getConsentRecord() || { value: false, timestamp: null, version: "consent_v1" };
+
+  // IMPORTANT: no schema included
+  const merged = {
+    version: "chat_label_tool_hidden_schema_v1",
+    exported_at: new Date().toISOString(),
+
+    // Research consent metadata (for later filtering)
+    research_consent: consentRec.value === true,
+    consent_timestamp: consentRec.timestamp,
+    consent_version: consentRec.version,
+    student_pseudonym: getOrCreateStudentPseudonym(),
+
+    // Conversation payload (unchanged)
+    conversation_id: convId,
+    conversation_title: convTitle,
+    conversation_with_labels: conversationClone,
+    labeled_messages: labeledMessages
+  };
+
+  const blob = new Blob([JSON.stringify(merged, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  const safeTitle = (convTitle || "conversation").replace(/[^\w\-]+/g, "_").slice(0, 50);
+  a.download = `labeled_${safeTitle}.jsonl`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+
+/** Instructor-only schema loader */
+async function maybeWireSchemaLoader(){
+  const params = new URLSearchParams(window.location.search);
+  const instructor = params.get("instructor") === "1";
+  const nodes = document.querySelectorAll(".instructorOnly");
+  nodes.forEach(n => n.style.display = instructor ? "block" : "none");
+  if (!instructor) return;
+
+  const schemaInput = el("schemaInput");
+  schemaInput.addEventListener("change", async (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    let obj;
+    try{ obj = JSON.parse(text); }
+    catch(e){ alert("Could not parse schema JSON: " + e); return; }
+    try{ validateSchema(obj); }
+    catch(e){ alert("Invalid schema.json: " + e.message); return; }
+    LABEL_SCHEMA = obj;
+    // If labeling already started, re-render current message fields
+    if (messages.length) renderFieldsForCurrentMessage();
+    updateProgress();
+    alert("Schema loaded (instructor mode).");
+  });
+}
+
+/** Wiring */
+resetAll();
+maybeWireSchemaLoader();
+
+el("fileInput").addEventListener("change", async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+
+  resetAll();
+
+  const text = await file.text();
+  let obj;
+  try { obj = JSON.parse(text); }
+  catch(e){ alert("Could not parse JSON: " + e); return; }
+
+  initFromLoadedRoot(obj);
+});
+
+el("conversationSelect").addEventListener("change", (ev) => {
+  const key = ev.target.value;
+  if (!key) return;
+  loadConversationByKey(key);
+});
+
+el("resetBtn").addEventListener("click", () => { if (confirm("Reset and clear loaded file + labels?")) resetAll(); });
+el("exportMergedBtn").addEventListener("click", () => exportMergedJson());
+
+el("prevBtn").addEventListener("click", () => { showMessage(idx - 1); });
+el("nextBtn").addEventListener("click", () => { showMessage(idx + 1); });
+el("jumpBtn").addEventListener("click", () => {
+  const n = prompt(`Jump to message index (0 to ${messages.length - 1}):`, String(idx));
+  if (n == null) return;
+  const k = parseInt(n, 10);
+  if (!Number.isFinite(k) || k < 0 || k >= messages.length) return;
+  showMessage(k);
+});
+
+// Keyboard nav
+document.addEventListener("keydown", (e) => {
+  const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+  const typing = (tag === "input" || tag === "textarea" || tag === "select");
+  if (typing) return;
+  if (!messages.length) return;
+
+  if (e.key === "ArrowLeft" && idx > 0) showMessage(idx - 1);
+  if (e.key === "ArrowRight" && idx < messages.length - 1) showMessage(idx + 1);
+});
+
+window.addEventListener("DOMContentLoaded", () => {
+  initConsentPopup();
+});
+
+    
+</script>
+</body>
+</html>
