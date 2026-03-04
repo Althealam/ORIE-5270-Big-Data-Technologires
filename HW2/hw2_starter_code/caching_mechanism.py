@@ -1,12 +1,11 @@
-from collections import OrderedDict
-from typing import Tuple, Optional
-import math
-
 ## TODO: Implement other classes or helper functions if needed
 
 # =========================
 # Main mechanism
 # =========================
+from collections import defaultdict, OrderedDict
+from typing import Tuple, Optional
+
 class CachingMechanism(object):
     """A Python emulator of a caching mechanism for movies (Video cache++)."""
 
@@ -23,38 +22,36 @@ class CachingMechanism(object):
         ttl : int
             TTL for new inserts; expiration time is t + ttl.
         """
-        self.movie_list = movie_list
-        self.cache_locations = cache_list  # List of (LocationName, X, Y)
-        self.K = movies_per_cache  # Maximum capacity per cache
-        self.TTL = ttl
+        ## TODO: Implement it
+        self.movies = set(movie_list)
+        self.cache_list = cache_list # list of (locationname, x, y)
+        self.ttl = ttl
+        self.movies_per_cache = movies_per_cache # maximum capacity per cache
 
-        # Initialize empty caches for each location
-        # Each cache is an OrderedDict mapping movie_title -> expiration_time
-        # OrderedDict maintains insertion order, enabling efficient LRU operations
-        self.caches = {location[0]: OrderedDict() for location in cache_list}
+        # as the questions mentioned, each cache locations maintains K cache, which can store at most K movies
+        # each cache is an orderdict mapping movie_title->expiration_time
+        self.caches = {}
+        for location_name, x, y in cache_list:
+            self.caches[location_name] = {
+                'items': {}, # movie->expiration
+                # items={"A":100, "B": 200, "C": 300}
+                'lru': OrderedDict() # MovieA, MovieB, MovieC
+            }
 
     def find_nearest_cache(self, x: float, y: float) -> str:
         """
         Return nearest cache location name using Euclidean distance.
         Tie-break: lexicographically smallest LocationName.
-
-        Time complexity: O(M) where M is the number of cache locations.
-        Can be optimized to O(log M) using spatial data structures like KD-tree.
         """
-        min_distance = float('inf')
+        ## TODO: Implement it
         location_name = None
-
-        for loc_name, cx, cy in self.cache_locations:
-            # Calculate Euclidean distance
-            distance = math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-
-            # Update nearest location with tie-breaking rule:
-            # If distances are equal, choose lexicographically smallest name
-            if distance < min_distance or (distance == min_distance and
-                                          (location_name is None or loc_name < location_name)):
-                min_distance = distance
-                location_name = loc_name
-
+        min_distance = float('inf')
+        for location, xi, yi in self.cache_list:
+            current_distance = (x-xi)**2+(y-yi)**2
+            # NOTE: need to compare their lexicograph when their distance are the same
+            if current_distance<min_distance or (current_distance==min_distance and location<location_name):
+                min_distance = current_distance
+                location_name = location
         return location_name
 
     def update_cache_state(self, location_name: str, movie_title: str, t: int) -> None:
@@ -62,35 +59,40 @@ class CachingMechanism(object):
         Bring a movie into the specified cache at time t.
         (This is called on misses/expired, per the prompt.)
 
-        Implementation strategy:
-        1. Remove all expired items first (they don't count toward capacity)
-        2. If cache is still full, evict LRU (least recently used) valid items
-        3. Insert new movie with expiration time t + TTL
-
-        Time complexity: O(log K) amortized
-        - Removing expired items: O(K) worst case, but O(1) amortized
-          (each item is expired and removed at most once)
-        - Eviction: O(1) using OrderedDict
-        - Insertion: O(1)
         """
+        ## TODO: Implement it
         cache = self.caches[location_name]
+        items = cache['items'] # movie->expiration
+        lru = cache['lru'] # main recency
 
-        # Step 1: Remove all expired items
-        # Expired items do not count toward cache capacity
-        expired_keys = [key for key, exp_time in cache.items() if t >= exp_time]
-        for key in expired_keys:
-            del cache[key]
+        # 1. clean expired movies in this cache
+        expired = []
+        for movie, expiration in items.items(): # movie, expiration_time
+            if expiration<=t:
+                expired.append(movie)
+        for movie in expired:
+            del items[movie]
+            if movie in lru:
+                del lru[movie]
+        
+        expiration_time = t+self.ttl
 
-        # Step 2: If cache is still full (only counting valid items), evict LRU items
-        while len(cache) >= self.K:
-            # OrderedDict maintains insertion/access order
-            # The first item is the least recently used (LRU)
-            oldest_key = next(iter(cache))
-            del cache[oldest_key]
+        # 2. movie already exits
+        if movie_title in items:
+            items[movie_title] = expiration_time
+            lru.move_to_end(movie_title)
+            return 
+        
+        # 3. cache full -> evict LRU
+        if len(items)>=self.movies_per_cache:
+            oldest_movie, _ = lru.popitem(last=False)
+            del items[oldest_movie]
+        
+        # 4. insert movie
+        items[movie_title] = expiration_time
+        lru[movie_title] = None
 
-        # Step 3: Insert new movie with expiration time
-        # New items are automatically added to the end of OrderedDict (most recently used)
-        cache[movie_title] = t + self.TTL
+
 
     def lookup(self, movie_title: str, user_x: float, user_y: float, t: int) -> Tuple[bool, Optional[str]]:
         """
@@ -98,38 +100,58 @@ class CachingMechanism(object):
 
         If nearest cache contains a valid copy, return (True, LocationName) and update recency.
         Otherwise return (False, None) and insert/refresh in nearest cache with expiration t+TTL.
-
-        Implementation follows the three-step process:
-        Step 1: Find nearest cache using Euclidean distance
-        Step 2: Check if movie exists and is valid (not expired)
-                - If hit: update LRU order (true LRU: update on every access)
-                - If miss/expired: proceed to Step 3
-        Step 3: Update cache state with new entry
-
-        Time complexity: O(log M) + O(log K) = O(log(M+K))
-        - find_nearest_cache: O(M) (can be O(log M) with spatial indexing)
-        - Cache lookup: O(1) with OrderedDict
-        - move_to_end: O(1)
-        - update_cache_state: O(log K) amortized
         """
-        # Step 1: Find nearest cache location
-        location_name = self.find_nearest_cache(user_x, user_y)
-        cache = self.caches[location_name]
+        ## TODO: Implement it
+        # 1. find the nearest location
+        nearest_location = self.find_nearest_cache(user_x, user_y)
 
-        # Step 2: Check if movie is in cache and valid
-        if movie_title in cache:
-            expiration_time = cache[movie_title]
+        # 2. get the cache for this location, which include [items, lru, expire_heap]
+        cache = self.caches[nearest_location]
+        items = cache['items'] # movie->expiration_time
+        lru = cache['lru']
 
-            # Check if not expired (valid if t < expiration_time)
-            if t < expiration_time:
-                # Cache hit! Update LRU order
-                # True LRU: recency is updated on every access, not just insertion
-                cache.move_to_end(movie_title)
-                return (True, location_name)
-            else:
-                # Movie is expired, remove it
-                del cache[movie_title]
+        # 3. clean expired movies
+        expired = []
+        for movie, expiration_time in items.items():
+            if expiration_time<=t:
+                expired.append(movie)
+        
+        for movie in expired:
+            del items[movie]
+            if movie in lru:
+                del lru[movie]
 
-        # Step 3: Cache miss or expired - update cache state
-        self.update_cache_state(location_name, movie_title, t)
+        # 4. cache hit
+        if movie_title in items and items[movie_title]>t:
+            lru.move_to_end(movie_title)
+            return (True, nearest_location)
+
+        # 5. cache miss
+        self.update_cache_state(nearest_location, movie_title, t)
         return (False, None)
+
+
+# movie_list = ["Movie1", "Movie2", "Movie3", "Movie4"]
+# # directions and their x and y
+# cache_list = [
+#     ("CacheA", 0.0, 0.0),
+#     ("CacheB", 10.0, 10.0),
+#     ("CacheC", 5.0, 5.0)
+# ]
+# movies_per_cache = 3  # Max 3 movies per cache
+# TTL = 10  # Movies expire after 10 time units
+# caching_mechanism = CachingMechanism(movie_list, cache_list, movies_per_cache, TTL)
+# print(caching_mechanism.caches)
+
+
+# movie_title = "Movie1"
+# str_x = 2
+# str_y = 3
+# nearest_location = caching_mechanism.find_nearest_cache(str_x, str_y)
+# print(nearest_location)
+
+# caching_mechanism.lookup('A', 1, 1, 1)
+# caching_mechanism.lookup('A', 1, 1, 2)
+# caching_mechanism.lookup('B', 1, 1, 3)
+# caching_mechanism.lookup('C', 1, 1, 4)
+# print(caching_mechanism.caches)
