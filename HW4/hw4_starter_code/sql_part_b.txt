@@ -1,0 +1,6 @@
+SELECT g.Games, g.Year, g.Season, g.City, COUNT(*) AS NumMedals
+FROM games g
+JOIN medals m ON g.id = m.games_id
+GROUP BY g.id, g.Games, g.Year, g.Season, g.City
+ORDER BY NumMedals DESC
+LIMIT 5;

@@ -1,0 +1,8 @@
+SELECT n.region, COUNT(*) AS NumGoldMedals
+FROM noc n
+JOIN athlete a ON n.NOC = a.NOC
+JOIN medals m ON a.id = m.athlete_id
+WHERE m.Medal = 'Gold'
+GROUP BY n.region
+ORDER BY NumGoldMedals DESC
+LIMIT 3;

@@ -1,0 +1,7 @@
+SELECT a.Name, e.Sport, COUNT(*) AS NumMedals
+FROM athlete a
+JOIN medals m ON a.id = m.athlete_id
+JOIN event e ON m.event_id = e.id
+GROUP BY a.id, a.Name, e.Sport
+ORDER BY NumMedals DESC
+LIMIT 5;

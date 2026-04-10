@@ -1,0 +1,10 @@
+SELECT a.Name, e.Event
+FROM athlete a
+JOIN medals m ON a.id = m.athlete_id
+JOIN event e ON m.event_id = e.id
+GROUP BY a.id, a.Name, e.id, e.Event
+HAVING COUNT(DISTINCT m.Medal) = 3
+   AND SUM(CASE WHEN m.Medal = 'Gold' THEN 1 ELSE 0 END) > 0
+   AND SUM(CASE WHEN m.Medal = 'Silver' THEN 1 ELSE 0 END) > 0
+   AND SUM(CASE WHEN m.Medal = 'Bronze' THEN 1 ELSE 0 END) > 0
+ORDER BY a.Name;

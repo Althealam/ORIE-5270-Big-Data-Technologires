@@ -4,6 +4,7 @@ import math
 import tempfile
 from bs4 import BeautifulSoup
 import pandas as pd
+from mr_count_consecutive_decreases import MRCountConsecutiveDecreases
 
 CANONICAL_COLUMNS = ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume"]
 
@@ -12,7 +13,71 @@ def scrape_historical_prices(html_text: str) -> pd.DataFrame:
     Return a pandas DataFrame with columns:
     Date, Open, High, Low, Close, Adj Close, Volume
     """
-    raise NotImplementedError
+    # 1. get html by using beautifulsoup
+    soup = BeautifulSoup(html_text, 'html.parser')
+
+    # 2. find the correct table 
+    table = None
+    tables = soup.find_all('table')
+    for t in tables:
+        classes = t.get('class', [])
+        # We want tables with 'cbd04' but without 'c1a9f' (hidden)
+        if 'cbd04' in classes and 'c1a9f' not in classes:
+            table = t
+            break
+
+    if table is None:
+        raise ValueError("Could not find the historical prices table")
+
+    # 3. Extract table rows from tbody
+    tbody = table.find('tbody')
+    if tbody is None:
+        raise ValueError("Could not find tbody in the table")
+
+    rows = tbody.find_all('tr')
+
+    # 4. Extract data from rows
+    data = []
+    for row in rows:
+        # Skip rows with colspan (these are ads/announcements)
+        if row.find('td', attrs={'colspan': True}):
+            continue
+
+        # Get all cells in the row
+        cells = row.find_all('td')
+
+        # We expect exactly 7 columns
+        if len(cells) == 7:
+            # Extract text from each cell
+            row_data = [cell.get_text(strip=True) for cell in cells]
+            data.append(row_data)
+
+    # 5. Create DataFrame
+    df = pd.DataFrame(data, columns=CANONICAL_COLUMNS)
+
+    # 6. Convert numerical columns to numeric values
+    numeric_cols = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+    for col in numeric_cols:
+        # Remove commas and convert to float
+        df[col] = df[col].str.replace(',', '', regex=False)
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    return df
+
+def split_into_chunks(prices: list, n_workers: int) -> list:
+    """
+    Split the prices list into n_workers chunks.
+    Each chunk should have roughly equal size.
+    """
+    n = len(prices)
+    chunk_size = math.ceil(n / n_workers)
+
+    chunks = []
+    for i in range(0, n, chunk_size):
+        chunk = prices[i:i + chunk_size]
+        chunks.append(chunk)
+
+    return chunks
 
 def parallel_count_consecutive_decreases(
     df: pd.DataFrame,

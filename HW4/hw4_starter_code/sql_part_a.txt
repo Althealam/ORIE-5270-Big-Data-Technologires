@@ -1,0 +1,4 @@
+SELECT *
+FROM athlete
+WHERE Team = 'Canada' AND Sex = 'M'
+ORDER BY Name;
