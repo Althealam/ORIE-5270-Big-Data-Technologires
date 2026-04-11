@@ -16,46 +16,38 @@ def scrape_historical_prices(html_text: str) -> pd.DataFrame:
     # 1. get html by using beautifulsoup
     soup = BeautifulSoup(html_text, 'html.parser')
 
-    # 2. find the correct table 
-    table = None
-    tables = soup.find_all('table')
-    for t in tables:
-        classes = t.get('class', [])
-        # We want tables with 'cbd04' but without 'c1a9f' (hidden)
-        if 'cbd04' in classes and 'c1a9f' not in classes:
-            table = t
-            break
+    # 2. find the historical prices table: same page has other cbd04 tables (headlines,
+    #    etc.). The first cbd04 table without c1a9f may not be the 7-column price table,
+    #    so we take the candidate that yields the most valid data rows.
+    def rows_from_price_table(table):
+        tbody = table.find('tbody')
+        if tbody is None:
+            return []
+        out = []
+        for row in tbody.find_all('tr'):
+            if row.find("td", attrs={"colspan": True}):
+                continue
+            cells = row.find_all("td")
+            if len(cells) == 7:
+                out.append([c.get_text(strip=True) for c in cells])
+        return out
 
-    if table is None:
+    data = []
+    for t in soup.find_all("table"):
+        classes = t.get("class", [])
+        if "cbd04" not in classes or "c1a9f" in classes:
+            continue
+        candidate = rows_from_price_table(t)
+        if len(candidate) > len(data):
+            data = candidate
+
+    if not data:
         raise ValueError("Could not find the historical prices table")
 
-    # 3. Extract table rows from tbody
-    tbody = table.find('tbody')
-    if tbody is None:
-        raise ValueError("Could not find tbody in the table")
-
-    rows = tbody.find_all('tr')
-
-    # 4. Extract data from rows
-    data = []
-    for row in rows:
-        # Skip rows with colspan (these are ads/announcements)
-        if row.find('td', attrs={'colspan': True}):
-            continue
-
-        # Get all cells in the row
-        cells = row.find_all('td')
-
-        # We expect exactly 7 columns
-        if len(cells) == 7:
-            # Extract text from each cell
-            row_data = [cell.get_text(strip=True) for cell in cells]
-            data.append(row_data)
-
-    # 5. Create DataFrame
+    # 3. Create DataFrame
     df = pd.DataFrame(data, columns=CANONICAL_COLUMNS)
 
-    # 6. Convert numerical columns to numeric values
+    # 4. Convert numerical columns to numeric values
     numeric_cols = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
     for col in numeric_cols:
         # Remove commas and convert to float
