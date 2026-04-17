@@ -29,7 +29,14 @@ def scrape_historical_prices(html_text: str) -> pd.DataFrame:
                 continue
             cells = row.find_all("td")
             if len(cells) == 7:
-                out.append([c.get_text(strip=True) for c in cells])
+                # Remove hidden elements (class c1a9f and c2b7e) before extracting text
+                cell_texts = []
+                for c in cells:
+                    # Remove spans with classes c1a9f and c2b7e (hidden/styled elements)
+                    for hidden in c.find_all(class_=['c1a9f', 'c2b7e']):
+                        hidden.decompose()
+                    cell_texts.append(c.get_text(strip=True))
+                out.append(cell_texts)
         return out
 
     data = []

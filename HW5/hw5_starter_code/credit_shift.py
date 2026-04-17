@@ -135,6 +135,7 @@ def add_user_features(tx: pd.DataFrame, users: pd.DataFrame) -> pd.DataFrame:
     users = users.drop_duplicates(subset='user_id', keep='first')
     user_cols_to_add = [c for c in users.columns if c=='user_id' or c not in tx.columns]
     merged = tx.merge(users[user_cols_to_add], on='user_id', how='left')
+    
     after = len(merged)
     if after != before:
         raise ValueError(f"Row count changed after merge: {before} -> {after}")
@@ -239,6 +240,7 @@ def evaluate_by_age_group(model, df: pd.DataFrame, feature_cols: List[str]) -> D
         y_true = sub['default_next']
         y_prob = sub['p_hat']
 
+        # if it only contains one class, then return nan
         if y_true.nunique()<2:
             auc = np.nan
         else:
@@ -340,10 +342,49 @@ def policy_profit_impact(
         raise ValueError("deploy_df must contain age_group")
 
     ## TODO: Implement it
-    profit_no = None
-    profit_with = None
+    # step1: predict default probabilities
+    p_hat = model.predict_proba(df[feature_cols])[:, 1]
 
-    breakdown: Dict[str, Dict[str, float]] = {}
+    # step2: decide who receives the retention offer
+    offer_indicator = [1 if x<=threshold else 0 for x in p_hat]
+    df['offer_indicator'] = offer_indicator
+
+    # step3: model the effect of the intervention
+    df['delta'] = np.where(
+        df['age_group'] == 'GenZ',
+        delta_genz,
+        delta_old
+    )
+    
+    # step4: determine the relevant balance
+    if 'balance_new' in df.columns:
+        df['balance'] = df['balance_new']
+    elif 'statement_balance' in df.columns:
+        df['balance'] = df['statement_balance']
+    else:
+        raise ValueError("There are not 'balance_new' and 'statement_balance' in the columns")
+    
+    # step5: estimate avoided credit losses
+    df['avoided_loss'] = df['offer_indicator']*df['delta']*0.90*df['balance']
+
+    # step6: account for the cost of the incentive
+    df['policy_cost'] = df['offer_indicator']*offer_cost
+    
+    # step7: profit without the policy
+    profit_no = np.sum(df['profit_true'])
+
+    # step8: profit with the policy
+    df['profit_with_policy_row'] = df['profit_true']+df['avoided_loss']-df['policy_cost']
+    profit_with = df['profit_with_policy_row'].sum()
+
+    breakdown = {}
+    for age, g in df.groupby('age_group'):
+        breakdown[age] = {
+            "n": len(g),
+            "profit_no_policy": g['profit_true'].sum(),
+            "profit_with_policy": g['profit_true'].sum(),
+            "offer_rate": g["offer_indicator"].mean()
+        }
 
     return profit_no, profit_with, breakdown
 
@@ -366,20 +407,39 @@ def stress_test_cohort_mix(
 
     rows = []
     ## TODO: Implement it
+    # define the target cohort
+    target_mask = df['age_group']==cohort
 
-    return pd.DataFrame(rows)
+    nt = target_mask.sum() # target group count
+    no = (~target_mask).sum() # non-target group count
+
+    results = []
+    # iterate all the share and calculate expected profit
+    for s in shares:
+        if nt==0 or no==0:
+            expected_profit = float(df['profit_true'].mean())
+        else:
+            weights = np.where(target_mask, s/nt, (1-s)/no)
+            expected_profit = float(np.sum(weights*df['profit_true']))
+        
+        results.append({
+            'cohort': cohort,
+            'share': float(s),
+            'expected_profit': expected_profit
+        })
+
+    return pd.DataFrame(results, columns=['cohort', 'share', 'expected_profit'])
 
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
 
-    transactions_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/transactions_train.csv"
-    users_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/users.csv"
+#     transactions_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/transactions_train.csv"
+#     users_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/users.csv"
 
-    tx, users = load_data(transactions_path, users_path)
-    tx = clean_transactions(tx)
-    train_df = add_user_features(tx, users)
-    model, feature_cols = train_default_model(train_df)
-    probs = model.predict_proba(train_df[feature_cols])[:, 1]
-    score = compute_uplift_score(model, train_df, feature_cols, top_frac=0.1)
-    out = evaluate_by_age_group(model, train_df, feature_cols)
-    print(out)
+#     tx, users = load_data(transactions_path, users_path)
+#     tx = clean_transactions(tx)
+#     train_df = add_user_features(tx, users)
+#     model, feature_cols = train_default_model(train_df)
+#     probs = model.predict_proba(train_df[feature_cols])[:, 1]
+#     score = compute_uplift_score(model, train_df, feature_cols, top_frac=0.1)
+#     out = evaluate_by_age_group(model, train_df, feature_cols)
