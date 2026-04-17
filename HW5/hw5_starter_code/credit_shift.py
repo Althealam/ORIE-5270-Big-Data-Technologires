@@ -7,16 +7,19 @@ import pandas as pd
 
 import sklearn
 ## TODO: Feel free to import any useful modules from sklearn below
+from sklearn import tree
 from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import brier_score_loss, roc_auc_score
-from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestClassifier
+import math
+from sklearn import metrics
 
 
 def load_data(transactions_path: str, users_path: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load transactions and users CSVs and return (tx, users)."""
+    ## TODO: Implement it
     tx = pd.read_csv(transactions_path)
     users = pd.read_csv(users_path)
     return tx, users
@@ -67,72 +70,58 @@ def clean_transactions(tx: pd.DataFrame) -> pd.DataFrame:
       6) user_id/month ints; age_group str
     """
     df = tx.copy()
+    
+    ## TODO: Implement it
+    # 1. get the duplicate rows
+    df = df.drop_duplicates(keep='first')
 
-    # (a) exact duplicates
-    df = df.drop_duplicates()
+    # 2. normalize primary_category
+    df['primary_category'] = df['primary_category'].str.strip()
+    df['primary_category'] = df['primary_category'].str.lower()
 
-    # Save per-age-group medians from the input tx (before filling)
-    pay_median_by_age = tx.groupby("age_group", dropna=False)["payment_rate"].median()
-    apr_median_by_age = tx.groupby("age_group", dropna=False)["apr"].median()
+    df["primary_category"] = df["primary_category"].replace(_CATEGORY_MAP)    # print(df['primary_category'].unique())
 
-    # (b) normalize category labels
-    if "primary_category" in df.columns:
-        normalized = (
-            df["primary_category"]
-            .astype("string")
-            .str.strip()
-            .str.lower()
-        )
-        df["primary_category"] = normalized.map(_CATEGORY_MAP).fillna(normalized)
+    # 3. missing values
+    # - spend_* NaNs -> 0
+    spend_cols = [col for col in df.columns if col.startswith("spend_")]
+    df[spend_cols] = df[spend_cols].fillna(0)
+    # - monthly_spend NaN -> sum(spend_*)
+    spend_sum = df[spend_cols].sum(axis=1)
+    df["monthly_spend"] = df['monthly_spend'].fillna(spend_sum)
+    # - payment_rate NaN -> median within age_group (computed from *input tx*)
+    payment_median = tx.groupby('age_group')['payment_rate'].median()
+    df['payment_rate'] = df.apply(
+        lambda row:
+            payment_median[row["age_group"]]
+            if pd.isna(row['payment_rate'])
+            else row['payment_rate'],
+            axis = 1
+    )
+    # - apr NaN -> median within age_group (computed from *input tx*)
+    apr_median = tx.groupby('age_group')['apr'].median()
+    df['apr'] = df.apply(
+        lambda row:
+            apr_median[row['age_group']]
+            if pd.isna(row['apr'])
+            else row['apr'],
+            axis = 1
+    )
 
-    # (d) spend_* clipping thresholds from input tx
-    clip_caps = {}
-    for col in _SPEND_COLS:
-        if col in tx.columns:
-            clip_caps[col] = tx[col].quantile(0.995)
+    # 4. Clip spend_* at 99.5th percentile (computed on *input tx*)
+    for col in spend_cols:
+        upper = tx[col].quantile(0.995)
+        df[col] = df[col].clip(upper=upper)
+    
+    # 5. payment_rate in [0,1]; apr in [0,0.40]
+    df['payment_rate'] = df['payment_rate'].clip(0, 1)
+    df['apr'] = df['apr'].clip(0, 0.40)
 
-    # (c) missing in spend_*
-    for col in _SPEND_COLS:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-            cap = clip_caps.get(col, np.nan)
-            if pd.notna(cap):
-                df[col] = df[col].clip(upper=cap)
-
-    # monthly_spend fill from (cleaned) spend sum if missing
-    if "monthly_spend" in df.columns:
-        spend_sum = df[[c for c in _SPEND_COLS if c in df.columns]].sum(axis=1)
-        df["monthly_spend"] = pd.to_numeric(df["monthly_spend"], errors="coerce")
-        df["monthly_spend"] = df["monthly_spend"].fillna(spend_sum)
-
-    # payment_rate / apr age-group median imputation
-    if "payment_rate" in df.columns:
-        df["payment_rate"] = pd.to_numeric(df["payment_rate"], errors="coerce")
-        df["payment_rate"] = df["payment_rate"].fillna(df["age_group"].map(pay_median_by_age))
-        df["payment_rate"] = df["payment_rate"].fillna(df["payment_rate"].median())
-
-    if "apr" in df.columns:
-        df["apr"] = pd.to_numeric(df["apr"], errors="coerce")
-        df["apr"] = df["apr"].fillna(df["age_group"].map(apr_median_by_age))
-        df["apr"] = df["apr"].fillna(df["apr"].median())
-
-    # (e) enforce valid ranges
-    if "payment_rate" in df.columns:
-        df["payment_rate"] = df["payment_rate"].clip(0.0, 1.0)
-    if "apr" in df.columns:
-        df["apr"] = df["apr"].clip(0.0, 0.40)
-
-    # (f) dtypes
-    if "user_id" in df.columns:
-        df["user_id"] = pd.to_numeric(df["user_id"], errors="coerce").round().astype("Int64")
-        df["user_id"] = df["user_id"].fillna(-1).astype(int)
-    if "month" in df.columns:
-        df["month"] = pd.to_numeric(df["month"], errors="coerce").round().astype("Int64")
-        df["month"] = df["month"].fillna(-1).astype(int)
-    if "age_group" in df.columns:
-        df["age_group"] = df["age_group"].astype(str)
-
+    # 6. user_id/month ints; age_group str
+    df['user_id'] = df['user_id'].astype(int)
+    df['month'] = df['month'].astype(int)
+    df['age_group'] = df['age_group'].astype(str)
     return df
+
 
 
 def add_user_features(tx: pd.DataFrame, users: pd.DataFrame) -> pd.DataFrame:
@@ -141,18 +130,16 @@ def add_user_features(tx: pd.DataFrame, users: pd.DataFrame) -> pd.DataFrame:
     Deduplicate users on user_id before merging.
     """
     before = len(tx)
-
-    users_dedup = users.drop_duplicates(subset=["user_id"], keep="first")
-    user_feature_cols = [c for c in users_dedup.columns if c != "user_id"]
-    existing_user_cols = [c for c in user_feature_cols if c in tx.columns]
-
-    tx_base = tx.drop(columns=existing_user_cols, errors="ignore")
-    merged = tx_base.merge(users_dedup, on="user_id", how="left")
     
+    ## TODO: Implement it
+    users = users.drop_duplicates(subset='user_id', keep='first')
+    user_cols_to_add = [c for c in users.columns if c=='user_id' or c not in tx.columns]
+    merged = tx.merge(users[user_cols_to_add], on='user_id', how='left')
     after = len(merged)
     if after != before:
         raise ValueError(f"Row count changed after merge: {before} -> {after}")
     return merged
+
 
 
 HARD_LEAKY_COLS = {
@@ -205,47 +192,33 @@ def train_default_model(train_df: pd.DataFrame):
         raise ValueError("Missing target column default_next")
 
     feature_cols = [c for c in df.columns if c != "default_next" and not _is_leaky(c)]
-    if len(feature_cols) == 0:
-        raise ValueError("No valid feature columns found after leakage filtering")
 
-    X = df[feature_cols].copy()
-    y = pd.to_numeric(df["default_next"], errors="coerce").fillna(0).astype(int)
+    ## TODO: Implement it
+    X, y = df[feature_cols], df['default_next']
+    num_cols = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
+    cat_cols = X.select_dtypes(include=["object", "string"]).columns.tolist()
+    preprocess = ColumnTransformer([
+        ("num", Pipeline([
+            ("imputer", SimpleImputer(strategy="median"))
+        ]), num_cols),
 
-    numeric_cols = X.select_dtypes(include=[np.number, "bool"]).columns.tolist()
-    categorical_cols = [c for c in feature_cols if c not in numeric_cols]
+        ("cat", Pipeline([
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore"))
+        ]), cat_cols)
+    ])
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            (
-                "num",
-                Pipeline(
-                    steps=[("imputer", SimpleImputer(strategy="median"))]
-                ),
-                numeric_cols,
-            ),
-            (
-                "cat",
-                Pipeline(
-                    steps=[
-                        ("imputer", SimpleImputer(strategy="most_frequent")),
-                        ("onehot", OneHotEncoder(handle_unknown="ignore")),
-                    ]
-                ),
-                categorical_cols,
-            ),
-        ],
-        remainder="drop",
-    )
-
-    model = Pipeline(
-        steps=[
-            ("prep", preprocessor),
-            ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
-        ]
-    )
+    model = Pipeline([
+        ("prep", preprocess),
+        ("clf", RandomForestClassifier(
+            n_estimators=300,
+            random_state=42
+        ))
+    ])
     model.fit(X, y)
 
     return model, feature_cols
+
 
 
 def evaluate_by_age_group(model, df: pd.DataFrame, feature_cols: List[str]) -> Dict[str, Dict[str, float]]:
@@ -255,17 +228,30 @@ def evaluate_by_age_group(model, df: pd.DataFrame, feature_cols: List[str]) -> D
     if "default_next" not in df.columns:
         raise ValueError("df must contain default_next")
 
+    ## TODO: Implement it:
     p_hat = model.predict_proba(df[feature_cols])[:, 1]
-    out: Dict[str, Dict[str, float]] = {}
-    tmp = df.copy()
-    tmp["_p_hat"] = p_hat
+    temp = df.copy()
+    temp['p_hat'] = p_hat
 
-    for age, g in tmp.groupby("age_group", dropna=False):
-        y_true = pd.to_numeric(g["default_next"], errors="coerce").fillna(0).astype(int).values
-        y_prob = g["_p_hat"].values
-        auc = float("nan") if np.unique(y_true).size < 2 else float(roc_auc_score(y_true, y_prob))
-        brier = float(brier_score_loss(y_true, y_prob))
-        out[str(age)] = {"auc": auc, "brier": brier, "n": int(len(g))}
+    out = {}
+
+    for group, sub in temp.groupby('age_group'):
+        y_true = sub['default_next']
+        y_prob = sub['p_hat']
+
+        if y_true.nunique()<2:
+            auc = np.nan
+        else:
+            auc = metrics.roc_auc_score(y_true, y_prob)
+        
+        # brier_score = mean((y-p)**2)
+        brier = metrics.brier_score_loss(y_true, y_prob)
+
+        out[str(group)] = {
+            'auc': float(auc) if pd.notna(auc) else np.nan,
+            'brier': float(brier),
+            'n': int(len(sub))
+        }
 
     return out
 
@@ -298,20 +284,30 @@ def compute_uplift_score(model, df: pd.DataFrame, feature_cols: List[str], top_f
     n = len(df)
     if n == 0:
         return 0.0
-
+    
+    ## TODO: Implement it
+    # 1. get the predicted_score
     p_hat = model.predict_proba(df[feature_cols])[:, 1]
-    k = int(np.ceil(float(top_frac) * n))
-    k = max(1, min(k, n))
 
-    y = pd.to_numeric(df["default_next"], errors="coerce").fillna(0).astype(float).values
-    order = np.argsort(-p_hat)
-    top_mean = float(np.mean(y[order[:k]]))
-    base_rate = float(np.mean(y))
+    # 2. get the k
+    n = len(df)
+    k = math.ceil(top_frac*n)
 
-    if base_rate <= 0:
+    # 3. rank rows by predicted default probability from largest to smallest
+    tmp = df.copy()
+    tmp['_p_hat'] = p_hat
+    top_k = tmp.sort_values(by="_p_hat", ascending=False).head(k)
+
+    # 4. compute default rate in top k
+    top_k_default_rate = top_k['default_next'].mean()
+
+    # 5. compute overall default rate
+    overall_default_rate = tmp['default_next'].mean()
+
+    # 6. compute uplift score
+    if overall_default_rate==0:
         return 0.0
-    uplift_score = top_mean / base_rate
-
+    uplift_score = top_k_default_rate/overall_default_rate
     return uplift_score
 
 
@@ -343,18 +339,7 @@ def policy_profit_impact(
     if "age_group" not in df.columns:
         raise ValueError("deploy_df must contain age_group")
 
-    p_hat = model.predict_proba(df[feature_cols])[:, 1]
-    offer_indicator = (p_hat <= threshold).astype(int)
-    age_group_norm = df["age_group"].astype(str)
-    delta = np.where(age_group_norm == "GenZ", delta_genz, delta_old)
-
-    if "balance_new" in df.columns:
-        balance = pd.to_numeric(df["balance_new"], errors="coerce").fillna(0.0)
-    elif "statement_balance" in df.columns:
-        balance = pd.to_numeric(df["statement_balance"], errors="coerce").fillna(0.0)
-    else:
-        raise ValueError("deploy_df must contain balance_new or statement_balance")
-
+    ## TODO: Implement it
     profit_no = None
     profit_with = None
 
@@ -383,3 +368,18 @@ def stress_test_cohort_mix(
     ## TODO: Implement it
 
     return pd.DataFrame(rows)
+
+
+if __name__ == '__main__':
+
+    transactions_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/transactions_train.csv"
+    users_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/users.csv"
+
+    tx, users = load_data(transactions_path, users_path)
+    tx = clean_transactions(tx)
+    train_df = add_user_features(tx, users)
+    model, feature_cols = train_default_model(train_df)
+    probs = model.predict_proba(train_df[feature_cols])[:, 1]
+    score = compute_uplift_score(model, train_df, feature_cols, top_frac=0.1)
+    out = evaluate_by_age_group(model, train_df, feature_cols)
+    print(out)
