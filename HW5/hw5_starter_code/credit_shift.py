@@ -224,31 +224,14 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
 
 
 def _add_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add critical engineered features for default prediction."""
-    df = df.copy()
+    """
+    Add critical engineered features for default prediction.
 
-    # Most important: credit utilization
-    if 'balance_new' in df.columns and 'credit_limit' in df.columns:
-        df['utilization'] = df['balance_new'] / (df['credit_limit'] + 1)
-
-    # Payment behavior
-    if 'payment_amount' in df.columns and 'statement_balance' in df.columns:
-        df['payment_ratio'] = df['payment_amount'] / (df['statement_balance'] + 1)
-
-    # Spending patterns
-    if 'monthly_spend' in df.columns and df['monthly_spend'].sum() > 0:
-        for spend_col in _SPEND_COLS:
-            if spend_col in df.columns:
-                df[f'{spend_col}_pct'] = df[spend_col] / (df['monthly_spend'] + 1)
-
-    # Risk interactions
-    if 'payment_rate' in df.columns and 'apr' in df.columns:
-        df['payment_apr'] = df['payment_rate'] * df['apr']
-
-    if 'utilization' in df.columns and 'payment_rate' in df.columns:
-        df['util_payment'] = df['utilization'] * (1 - df['payment_rate'])
-
-    return df
+    This is a wrapper around FeatureEngineer to ensure consistency.
+    Feature engineering logic is defined ONLY in FeatureEngineer class.
+    """
+    engineer = FeatureEngineer()
+    return engineer.transform(df)
 
 
 def train_default_model(train_df: pd.DataFrame):
@@ -529,17 +512,31 @@ def stress_test_cohort_mix(
     return pd.DataFrame(results, columns=['cohort', 'share', 'expected_profit'])
 
 
-# if __name__ == '__main__':
+if __name__ == '__main__':
 
-#     transactions_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/transactions_train.csv"
-#     users_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/users.csv"
+    transactions_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/transactions_train.csv"
+    users_path = "/Users/althealam/Desktop/School/2026Spring/ORIE 5270-Big Data Technologies/ORIE-5270-Big-Data-Technologires/HW5/hw5_starter_code/users.csv"
 
-#     tx, users = load_data(transactions_path, users_path)
-#     tx = clean_transactions(tx)
-#     train_df = add_user_features(tx, users)
-#     # train_df = _add_features(train_df)
-#     model, feature_cols = train_default_model(train_df)
-#     probs = model.predict_proba(train_df[feature_cols])[:, 1]
-#     uplift_score = compute_uplift_score(model, train_df, feature_cols, top_frac=0.1)
-#     out = evaluate_by_age_group(model, train_df, feature_cols)
-#     print(uplift_score)
+    tx, users = load_data(transactions_path, users_path)
+    tx = clean_transactions(tx)
+    train_df = add_user_features(tx, users)
+    # train_df = _add_features(train_df)
+    model, feature_cols = train_default_model(train_df)
+
+    # # get the importance of all features
+    # clf = model.named_steps['clf']
+    # importances = clf.feature_importances_
+    # preprocessor = model.named_steps['prep']
+    # num_features = preprocessor.named_transformers_['num'].get_feature_names_out()
+    # cat_features = preprocessor.named_transformers_['cat'].named_steps['onehot'].get_feature_names_out()
+    # feature_names = list(num_features)+list(cat_features)
+    # importance_df = pd.DataFrame({
+    #     'feature': feature_names,
+    #     'importance': importances
+    # }).sort_values('importance', ascending=False)
+    # print(importance_df)
+
+    probs = model.predict_proba(train_df[feature_cols])[:, 1]
+    uplift_score = compute_uplift_score(model, train_df, feature_cols, top_frac=0.1)
+    out = evaluate_by_age_group(model, train_df, feature_cols)
+    print(uplift_score)
