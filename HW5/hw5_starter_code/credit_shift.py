@@ -12,7 +12,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
+from sklearn.base import BaseEstimator, TransformerMixin
 import math
 from sklearn import metrics
 
@@ -175,6 +176,81 @@ def _is_leaky(col: str) -> bool:
     return any(sub in c for sub in LEAKY_SUBSTRINGS)
 
 
+class FeatureEngineer(BaseEstimator, TransformerMixin):
+    """Custom transformer to add engineered features."""
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        """Add critical engineered features for default prediction."""
+        df = X.copy()
+
+        # Most important: credit utilization
+        if 'balance_new' in df.columns and 'credit_limit' in df.columns:
+            df['utilization'] = df['balance_new'] / (df['credit_limit'] + 1)
+
+        # Payment behavior
+        if 'payment_amount' in df.columns and 'statement_balance' in df.columns:
+            df['payment_ratio'] = df['payment_amount'] / (df['statement_balance'] + 1)
+
+        # Spending patterns
+        if 'monthly_spend' in df.columns and df['monthly_spend'].sum() > 0:
+            for spend_col in _SPEND_COLS:
+                if spend_col in df.columns:
+                    df[f'{spend_col}_pct'] = df[spend_col] / (df['monthly_spend'] + 1)
+
+        # Risk interactions
+        if 'payment_rate' in df.columns and 'apr' in df.columns:
+            df['payment_apr'] = df['payment_rate'] * df['apr']
+
+        if 'utilization' in df.columns and 'payment_rate' in df.columns:
+            df['util_payment'] = df['utilization'] * (1 - df['payment_rate'])
+
+        # Additional risk indicators
+        if 'balance_new' in df.columns and 'income' in df.columns:
+            df['debt_to_income'] = df['balance_new'] / (df['income'] + 1)
+
+        if 'payment_rate' in df.columns:
+            df['payment_shortfall'] = 1 - df['payment_rate']
+
+        if 'apr' in df.columns:
+            df['apr_squared'] = df['apr'] ** 2
+
+        if 'utilization' in df.columns:
+            df['util_squared'] = df['utilization'] ** 2
+
+        return df
+
+
+def _add_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add critical engineered features for default prediction."""
+    df = df.copy()
+
+    # Most important: credit utilization
+    if 'balance_new' in df.columns and 'credit_limit' in df.columns:
+        df['utilization'] = df['balance_new'] / (df['credit_limit'] + 1)
+
+    # Payment behavior
+    if 'payment_amount' in df.columns and 'statement_balance' in df.columns:
+        df['payment_ratio'] = df['payment_amount'] / (df['statement_balance'] + 1)
+
+    # Spending patterns
+    if 'monthly_spend' in df.columns and df['monthly_spend'].sum() > 0:
+        for spend_col in _SPEND_COLS:
+            if spend_col in df.columns:
+                df[f'{spend_col}_pct'] = df[spend_col] / (df['monthly_spend'] + 1)
+
+    # Risk interactions
+    if 'payment_rate' in df.columns and 'apr' in df.columns:
+        df['payment_apr'] = df['payment_rate'] * df['apr']
+
+    if 'utilization' in df.columns and 'payment_rate' in df.columns:
+        df['util_payment'] = df['utilization'] * (1 - df['payment_rate'])
+
+    return df
+
+
 def train_default_model(train_df: pd.DataFrame):
     """
     Train a Scikit-Learn Classifier to predict default_next.
@@ -192,12 +268,19 @@ def train_default_model(train_df: pd.DataFrame):
     if "default_next" not in df.columns:
         raise ValueError("Missing target column default_next")
 
-    feature_cols = [c for c in df.columns if c != "default_next" and not _is_leaky(c)]
-
     ## TODO: Implement it
-    X, y = df[feature_cols], df['default_next']
-    num_cols = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
-    cat_cols = X.select_dtypes(include=["object", "string"]).columns.tolist()
+
+    # Get original feature columns (before engineering)
+    original_feature_cols = [c for c in df.columns if c != "default_next" and not _is_leaky(c)]
+
+    # Add engineered features for determining column types
+    df_with_features = _add_features(df)
+    all_feature_cols = [c for c in df_with_features.columns if c != "default_next" and not _is_leaky(c)]
+
+    X_temp = df_with_features[all_feature_cols]
+    num_cols = X_temp.select_dtypes(include=["int64", "float64"]).columns.tolist()
+    cat_cols = X_temp.select_dtypes(include=["object", "string"]).columns.tolist()
+
     preprocess = ColumnTransformer([
         ("num", Pipeline([
             ("imputer", SimpleImputer(strategy="median"))
@@ -209,16 +292,31 @@ def train_default_model(train_df: pd.DataFrame):
         ]), cat_cols)
     ])
 
+    # Pipeline with feature engineering as first step
+    # best config: n_estimators = 1000, max_depth=30, min_samples_split=2, max_features='log2'
     model = Pipeline([
+        ("feature_eng", FeatureEngineer()),
         ("prep", preprocess),
         ("clf", RandomForestClassifier(
-            n_estimators=300,
-            random_state=42
+            n_estimators=1000,
+            max_depth=20,
+            min_samples_split=2,
+            min_samples_leaf=1,
+            max_features='log2',
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1,
+            bootstrap=True
         ))
     ])
+
+    # Train on ORIGINAL features (Pipeline will add engineered features automatically)
+    X = df[original_feature_cols]
+    y = df['default_next']
     model.fit(X, y)
 
-    return model, feature_cols
+    # Return original feature columns
+    return model, original_feature_cols
 
 
 
@@ -245,7 +343,7 @@ def evaluate_by_age_group(model, df: pd.DataFrame, feature_cols: List[str]) -> D
             auc = np.nan
         else:
             auc = metrics.roc_auc_score(y_true, y_prob)
-        
+
         # brier_score = mean((y-p)**2)
         brier = metrics.brier_score_loss(y_true, y_prob)
 
@@ -286,7 +384,7 @@ def compute_uplift_score(model, df: pd.DataFrame, feature_cols: List[str], top_f
     n = len(df)
     if n == 0:
         return 0.0
-    
+
     ## TODO: Implement it
     # 1. get the predicted_score
     p_hat = model.predict_proba(df[feature_cols])[:, 1]
@@ -382,7 +480,7 @@ def policy_profit_impact(
         breakdown[age] = {
             "n": len(g),
             "profit_no_policy": g['profit_true'].sum(),
-            "profit_with_policy": g['profit_true'].sum(),
+            "profit_with_policy": g['profit_with_policy_row'].sum(),
             "offer_rate": g["offer_indicator"].mean()
         }
 
@@ -439,7 +537,9 @@ def stress_test_cohort_mix(
 #     tx, users = load_data(transactions_path, users_path)
 #     tx = clean_transactions(tx)
 #     train_df = add_user_features(tx, users)
+#     # train_df = _add_features(train_df)
 #     model, feature_cols = train_default_model(train_df)
 #     probs = model.predict_proba(train_df[feature_cols])[:, 1]
-#     score = compute_uplift_score(model, train_df, feature_cols, top_frac=0.1)
+#     uplift_score = compute_uplift_score(model, train_df, feature_cols, top_frac=0.1)
 #     out = evaluate_by_age_group(model, train_df, feature_cols)
+#     print(uplift_score)
