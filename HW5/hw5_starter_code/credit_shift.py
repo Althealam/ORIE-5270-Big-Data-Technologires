@@ -12,7 +12,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier, VotingClassifier
+from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.base import BaseEstimator, TransformerMixin
 import math
 from sklearn import metrics
@@ -220,6 +221,46 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         if 'utilization' in df.columns:
             df['util_squared'] = df['utilization'] ** 2
 
+
+        # ===== 新增特征 =====
+        
+        # 1. High risk flags
+        if 'utilization' in df.columns:
+            df['high_util_flag'] = (df['utilization'] > 0.8).astype(int)
+        
+        if 'payment_rate' in df.columns:
+            df['low_payment_flag'] = (df['payment_rate'] < 0.3).astype(int)
+        
+        
+        if 'debt_to_income' in df.columns:
+            df['high_debt_flag'] = (df['debt_to_income'] > 0.5).astype(int)
+        
+        # 2. Credit interactions
+        if 'balance_new' in df.columns and 'income' in df.columns:
+            df['balance_to_income'] = df['balance_new'] / (df['income'] + 1)
+        
+        if 'utilization' in df.columns and 'apr' in df.columns:
+            df['util_apr_interaction'] = df['utilization'] * df['apr']
+        
+        # 3. Payment capacity
+        if 'payment_amount' in df.columns and 'income' in df.columns:
+            df['payment_to_income'] = df['payment_amount'] / (df['income'] / 12 + 1)
+        
+        
+        # 4. Spending diversity
+        if 'monthly_spend' in df.columns:
+            spend_cols = [c for c in df.columns if c.startswith('spend_') and c != 'monthly_spend']
+            if spend_cols:
+                df['spending_diversity'] = (df[spend_cols] > 0).sum(axis=1)
+        
+        # 5. Composite risk
+        if all(c in df.columns for c in ['utilization', 'payment_rate', 'apr']):
+            df['risk_composite'] = (
+                df['utilization'] * 0.4 + 
+                (1 - df['payment_rate']) * 0.4 + 
+                df['apr'] * 0.5
+            )
+
         return df
 
 
@@ -264,6 +305,8 @@ def train_default_model(train_df: pd.DataFrame):
     num_cols = X_temp.select_dtypes(include=["int64", "float64"]).columns.tolist()
     cat_cols = X_temp.select_dtypes(include=["object", "string"]).columns.tolist()
 
+    # preprocess: numeric columns, categorical columns
+    
     preprocess = ColumnTransformer([
         ("num", Pipeline([
             ("imputer", SimpleImputer(strategy="median"))
@@ -276,20 +319,19 @@ def train_default_model(train_df: pd.DataFrame):
     ])
 
     # Pipeline with feature engineering as first step
-    # best config: n_estimators = 1000, max_depth=30, min_samples_split=2, max_features='log2'
+    # Using LogisticRegression for simplicity and generalization
+
     model = Pipeline([
-        ("feature_eng", FeatureEngineer()),
+        ("feature_eng", FeatureEngineer()), # add feature engineering
         ("prep", preprocess),
-        ("clf", RandomForestClassifier(
-            n_estimators=1000,
-            max_depth=20,
-            min_samples_split=2,
-            min_samples_leaf=1,
-            max_features='log2',
+        ("clf", LogisticRegression(
+            C=10.0,
             class_weight='balanced',
+            max_iter=20000,
+            solver='saga',
+            tol=1e-3,
             random_state=42,
-            n_jobs=-1,
-            bootstrap=True
+            warm_start=False
         ))
     ])
 
@@ -522,19 +564,6 @@ if __name__ == '__main__':
     train_df = add_user_features(tx, users)
     # train_df = _add_features(train_df)
     model, feature_cols = train_default_model(train_df)
-
-    # # get the importance of all features
-    # clf = model.named_steps['clf']
-    # importances = clf.feature_importances_
-    # preprocessor = model.named_steps['prep']
-    # num_features = preprocessor.named_transformers_['num'].get_feature_names_out()
-    # cat_features = preprocessor.named_transformers_['cat'].named_steps['onehot'].get_feature_names_out()
-    # feature_names = list(num_features)+list(cat_features)
-    # importance_df = pd.DataFrame({
-    #     'feature': feature_names,
-    #     'importance': importances
-    # }).sort_values('importance', ascending=False)
-    # print(importance_df)
 
     probs = model.predict_proba(train_df[feature_cols])[:, 1]
     uplift_score = compute_uplift_score(model, train_df, feature_cols, top_frac=0.1)
